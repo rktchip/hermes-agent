@@ -78,6 +78,18 @@ def _hardline_rm_path(path_alt: str, tail: str = r'(?:\s|$|[)`;|&])') -> str:
 _HARDLINE_SYSTEM_DIRS = (r'/home|/home/\*|/root|/root/\*|/etc|/etc/\*|/usr|/usr/\*|'
                          r'/var|/var/\*|/bin|/bin/\*|/sbin|/sbin/\*|/boot|/boot/\*|/lib|/lib/\*')
 
+# Interactive browsers sharing one binary between the agent's headless
+# instance and the user's real sessions (Chromium singleton per
+# --user-data-dir). An image-name kill can never mean "just my instance".
+# Defined up here (not beside _SHELL_NAMES) because HARDLINE_PATTERNS below
+# references it at module load. Trailing (?![\w-]) keeps specialized binaries
+# (chrome-headless-shell, chromedriver) and -f patterns naming them reachable.
+_BROWSER_IMAGE_RE = r"\b(?:chrome|msedge|firefox)(?:\.exe)?(?![\w-])"
+_BROWSER_KILL_HINT = (
+    "image-wide browser kill blocked; scope by PID instead "
+    "(netstat -ano | findstr :9222, then taskkill /PID <pid> /T /F)"
+)
+
 # `rm` plus flag group, shared by the rm hardline rules (plain concatenation, not f-string:
 # backslashes in replacement fields are unsupported on the 3.11 floor). _CMDPOS-anchored so `rm`
 # must be an actual command word — "rm -rf /" as DATA in `git commit -m "…rm -rf /…"` must not trip the floor.
@@ -114,6 +126,18 @@ HARDLINE_PATTERNS = [
     # Kill every process on the system — anchor the command-name token so `echo "kill -1 sends SIGHUP to
     # everything"` doesn't trip (#93392).
     (_CMDPOS + r'kill\s+(-[^\s]+\s+)*-1\b', "kill all processes"),
+    # Image-wide kills of interactive browsers — Windows analogue of `kill -1`
+    # scoped to the user's session set (tcs-social 20260924_095646_ffc02421 msg
+    # 22374/22375: default-behavior `taskkill /F /IM chrome.exe` terminated user
+    # PID 3712). With or without /F: the graceful form kills the windows too.
+    # PID-scoped kills (taskkill /PID <pid> /T /F) are unaffected on purpose.
+    (_CMDPOS + r'taskkill(?:\.exe)?\b[^\n]*?/im\b[^\n]*?' + _BROWSER_IMAGE_RE,
+     "image-wide kill of user browser (taskkill /IM) — " + _BROWSER_KILL_HINT),
+    (_CMDPOS + r'taskkill(?:\.exe)?\b[^\n]*?/fi\b[^\n]*?\bimagename\s+eq\s*'
+     + _BROWSER_IMAGE_RE,
+     "image-wide kill of user browser (taskkill /FI) — " + _BROWSER_KILL_HINT),
+    (_CMDPOS + r'stop-process\b[^\n]*?' + _BROWSER_IMAGE_RE,
+     "image-wide kill of user browser (Stop-Process) — " + _BROWSER_KILL_HINT),
     (_CMDPOS + r'(shutdown|reboot|halt|poweroff)\b', "system shutdown/reboot"),
     (_CMDPOS + r'init\s+[06]\b', "init 0/6 (shutdown/reboot)"),
     (_CMDPOS + r'systemctl\s+(poweroff|reboot|halt|kexec)\b', "systemctl poweroff/reboot"),
