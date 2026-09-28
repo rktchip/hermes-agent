@@ -78,6 +78,17 @@ def _hardline_rm_path(path_alt: str, tail: str = r'(?:\s|$|[)`;|&])') -> str:
 _HARDLINE_SYSTEM_DIRS = (r'/home|/home/\*|/root|/root/\*|/etc|/etc/\*|/usr|/usr/\*|'
                          r'/var|/var/\*|/bin|/bin/\*|/sbin|/sbin/\*|/boot|/boot/\*|/lib|/lib/\*')
 
+# Chrome-only fallback: image-wide chrome kills close the user's real windows
+# (Chromium singleton per --user-data-dir merges agent headless + user sessions;
+# tcs-social 20260924_095646_ffc02421 msg 22374/22375 terminated user PID 3712).
+# Scoped to chrome (live-fired) so msedge/firefox stay on the old dangerous path.
+# Trailing (?![\w-]) keeps chrome-headless-shell / chromedriver reachable.
+_CHROME_IMAGE_RE = r"\bchrome(?:\.exe)?(?![\w-])"
+_CHROME_KILL_HINT = (
+    "image-wide chrome kill blocked; scope by PID instead "
+    "(netstat -ano | findstr :9222, then taskkill /PID <pid> /T /F)"
+)
+
 # `rm` plus flag group, shared by the rm hardline rules (plain concatenation, not f-string:
 # backslashes in replacement fields are unsupported on the 3.11 floor). _CMDPOS-anchored so `rm`
 # must be an actual command word — "rm -rf /" as DATA in `git commit -m "…rm -rf /…"` must not trip the floor.
@@ -114,6 +125,17 @@ HARDLINE_PATTERNS = [
     # Kill every process on the system — anchor the command-name token so `echo "kill -1 sends SIGHUP to
     # everything"` doesn't trip (#93392).
     (_CMDPOS + r'kill\s+(-[^\s]+\s+)*-1\b', "kill all processes"),
+    # Image-wide chrome kills — Windows analogue of `kill -1` for the user's
+    # session set. With or without /F: graceful closes windows too. PID-scoped
+    # kills (taskkill /PID <pid> /T /F) unaffected. Chrome-only: msedge/firefox
+    # stay on the old dangerous path until live-fired the same way.
+    (_CMDPOS + r'taskkill(?:\.exe)?\b[^\n]*?/im\b[^\n]*?' + _CHROME_IMAGE_RE,
+     "image-wide kill of user browser (taskkill /IM) — " + _CHROME_KILL_HINT),
+    (_CMDPOS + r'taskkill(?:\.exe)?\b[^\n]*?/fi\b[^\n]*?\bimagename\s+eq\s*'
+     + _CHROME_IMAGE_RE,
+     "image-wide kill of user browser (taskkill /FI) — " + _CHROME_KILL_HINT),
+    (_CMDPOS + r'stop-process\b[^\n]*?' + _CHROME_IMAGE_RE,
+     "image-wide kill of user browser (Stop-Process) — " + _CHROME_KILL_HINT),
     (_CMDPOS + r'(shutdown|reboot|halt|poweroff)\b', "system shutdown/reboot"),
     (_CMDPOS + r'init\s+[06]\b', "init 0/6 (shutdown/reboot)"),
     (_CMDPOS + r'systemctl\s+(poweroff|reboot|halt|kexec)\b', "systemctl poweroff/reboot"),
